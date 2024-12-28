@@ -1,0 +1,16 @@
+[package]
+name = "rsocket-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-stream = "0.3.6"
+bytes = "1.9.0"
+clap = { version = "4.5.23", features = ["derive"] }
+prost = "0.13.4"
+rsocket_rust = "0.7.5"
+rsocket_rust_transport_websocket = "0.7.4"
+tokio = "1.42.0"
+
+[build-dependencies]
+prost-build = "0.13.4"
