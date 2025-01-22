@@ -13,4 +13,10 @@ rsocket-cli ws://localhost:8201/rsocket describe api.protobuf.eq.EqBands
 # File : "..."
 # File : "..."
 # File : "..."
+rsocket-cli ws://localhost:8201/rsocket api.protobuf.routing.RoutingStrips/GetRoutingStrips
+# Entry : {...}
+rsocket-cli ws://localhost:8201/rsocket api.protobuf.routing.RoutingStrips/RouteMain -d '{"faderNumber":0,"index": 0}'
+# Entry : {...}
+rsocket-cli ws://localhost:8080/rsocket renderer.RendererService/OnEvent
+# Entry : {...}
 ```
