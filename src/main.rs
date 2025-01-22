@@ -21,416 +21,375 @@ use rsocket_rust_transport_websocket::WebsocketClientTransport;
 type FnMetadata = Box<dyn FnMut() -> Result<(MimeType, Vec<u8>)>>;
 
 pub mod reflection {
-    include!(concat!(env!("OUT_DIR"), "/grpc.reflection.v1.rs"));
+  include!(concat!(env!("OUT_DIR"), "/grpc.reflection.v1.rs"));
 }
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 #[command(propagate_version = true)]
 struct Cli {
-    address: String,
-    #[command(subcommand)]
-    command: Option<Commands>,
-    endpoint: Option<String>,
-    #[arg(short, long)]
-    data: Option<String>,
-    #[arg(short, long)]
-    token: Option<String>,
+  address: String,
+  #[command(subcommand)]
+  command: Option<Commands>,
+  endpoint: Option<String>,
+  #[arg(short, long)]
+  data: Option<String>,
+  #[arg(short, long)]
+  token: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    List(ListArgs),
-    Describe(DescribeArgs),
+  List(ListArgs),
+  Describe(DescribeArgs),
 }
 
 #[derive(Args, Debug)]
 struct ListArgs {
-    name: Option<String>,
+  name: Option<String>,
 }
 
 #[derive(Args, Debug)]
 struct DescribeArgs {
-    name: String,
+  name: String,
 }
-
-#[derive(Args, Debug)]
-struct StreamArgs {
-    name: String,
-}
-
-#[derive(Args, Debug)]
-struct SubscribeEventsArgs {}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+  let cli = Cli::parse();
 
-    println!("Address : {:?}", cli.address);
-    println!("Endpoint : {:?}", cli.endpoint);
-    println!("Data : {:?}", cli.data);
-    println!("Token : {:?}", cli.token);
+  let connection_payload = cli
+    .token
+    .and_then(|token| create_setup(token.as_str()).ok())
+    .and_then(|metadata| create_setup_payload(metadata).ok())
+    .unwrap_or_else(|| Payload::from(""));
 
-    let connection_payload = cli
-        .token
-        .and_then(|token| create_setup(token.as_str()).ok())
-        .and_then(|metadata| create_setup_payload(metadata).ok())
-        .unwrap_or_else(|| Payload::from(""));
+  let client = RSocketFactory::connect()
+    .transport(WebsocketClientTransport::from(cli.address.as_ref()))
+    .setup(connection_payload)
+    .mime_type("text/plain", "text/plain")
+    .start()
+    .await?;
 
-    let client = RSocketFactory::connect()
-        .transport(WebsocketClientTransport::from(cli.address.as_ref()))
-        .setup(connection_payload)
-        .mime_type("text/plain", "text/plain")
-        .start()
-        .await?;
-
-    match &cli.command {
-        Some(Commands::List(args)) => {
-            println!("List services: {:?}", args.name);
-            list_services(&client).await?;
-        }
-        Some(Commands::Describe(args)) => {
-            println!("Describe service: {:?}", args.name);
-            describe_service(&client, &args.name).await?;
-        }
-        None => match &cli.endpoint {
-            Some(endpoint) => {
-                call_endpoint(&client, &endpoint, cli.data).await?;
-            }
-            _ => {}
-        },
+  match &cli.command {
+    Some(Commands::List(args)) => {
+      list_services(&client, &args.name).await?;
     }
+    Some(Commands::Describe(args)) => {
+      describe_service(&client, &args.name, true).await?;
+    }
+    None => match &cli.endpoint {
+      Some(endpoint) => {
+        call_endpoint(&client, &endpoint, cli.data).await?;
+      }
+      _ => {}
+    },
+  }
 
-    // client.close();
-
-    Ok(())
+  Ok(())
 }
 
-async fn list_services(client: &Client) -> Result<()> {
-    let req = reflection::ServerReflectionRequest {
-        host: "ignore".to_owned(),
-        message_request: Some(
-            reflection::server_reflection_request::MessageRequest::ListServices(
-                "ignore".to_owned(),
-            ),
-        ),
-    };
+async fn list_services(client: &Client, _service: &Option<String>) -> Result<()> {
+  let req = reflection::ServerReflectionRequest {
+    host: "ignore".to_owned(),
+    message_request: Some(reflection::server_reflection_request::MessageRequest::ListServices(
+      "ignore".to_owned(),
+    )),
+  };
 
-    let payload = create_payload(
-        req,
-        create_route("grpc.reflection.v1.ServerReflection.ServerReflectionInfo")?,
-    )?;
+  let payload = create_payload(
+    req,
+    create_route("grpc.reflection.v1.ServerReflection.ServerReflectionInfo")?,
+  )?;
 
-    let stream = async_stream::stream! {
-        yield Ok(payload);
-    };
+  let stream = async_stream::stream! {
+      yield Ok(payload);
+  };
 
-    println!("Start channel");
-    let mut results = client.request_channel(Box::pin(stream));
+  let mut results = client.request_channel(Box::pin(stream));
 
-    loop {
-        match results.next().await {
-            Some(Ok(res)) => {
-                println!("Got : {:?}", res);
+  loop {
+    match results.next().await {
+      Some(Ok(res)) => {
+        let buf = res.data().unwrap().clone();
+        let decoded = reflection::ServerReflectionResponse::decode(buf)?;
 
-                let buf = res.data().unwrap().clone();
-                let decoded = reflection::ServerReflectionResponse::decode(buf)?;
-
-                match decoded.message_response {
-                    Some(reflection::server_reflection_response::MessageResponse::ListServicesResponse(ls)) => {
-                        for service in ls.service {
-                            println!("Service : {:?}", service.name);
-                        }
-                    }
-                    _ => {}
-                }
-
-                // println!("Decoded : {decoded:#?}");
-                break;
+        match decoded.message_response {
+          Some(reflection::server_reflection_response::MessageResponse::ListServicesResponse(ls)) => {
+            for service in ls.service {
+              println!("{}", service.name);
             }
-            Some(Err(err)) => {
-                eprintln!("ERR : {err:?}");
-                break;
-            }
-            None => {
-                println!("Ended stream");
-                break;
-            }
+          }
+          _ => {}
         }
+        break;
+      }
+      Some(Err(err)) => {
+        eprintln!("ERR : {err:?}");
+        break;
+      }
+      None => {
+        println!("Ended stream");
+        break;
+      }
     }
+  }
 
-    Ok(())
+  Ok(())
 }
 
-async fn describe_service(client: &Client, name: &str) -> Result<DescriptorPool> {
-    let req = reflection::ServerReflectionRequest {
-        host: "ignore".to_owned(),
-        message_request: Some(
-            reflection::server_reflection_request::MessageRequest::FileByFilename(name.to_string()),
-        ),
-    };
+async fn describe_service(client: &Client, name: &str, with_output: bool) -> Result<DescriptorPool> {
+  let req = reflection::ServerReflectionRequest {
+    host: "ignore".to_owned(),
+    message_request: Some(reflection::server_reflection_request::MessageRequest::FileByFilename(
+      name.to_string(),
+    )),
+  };
 
-    let payload = create_payload(
-        req,
-        create_route("grpc.reflection.v1.ServerReflection.ServerReflectionInfo")?,
-    )?;
+  let payload = create_payload(
+    req,
+    create_route("grpc.reflection.v1.ServerReflection.ServerReflectionInfo")?,
+  )?;
 
-    let stream = async_stream::stream! {
-        yield Ok(payload);
-    };
+  let stream = async_stream::stream! {
+      yield Ok(payload);
+  };
 
-    println!("Start channel");
-    let mut results = client.request_channel(Box::pin(stream));
+  let mut results = client.request_channel(Box::pin(stream));
 
-    loop {
-        match results.next().await {
-            Some(Ok(res)) => {
-                println!("Got : {:?}", res);
+  loop {
+    match results.next().await {
+      Some(Ok(res)) => {
+        let buf = res.data().unwrap().clone();
+        let decoded = reflection::ServerReflectionResponse::decode(buf)?;
 
-                let buf = res.data().unwrap().clone();
-                let decoded = reflection::ServerReflectionResponse::decode(buf)?;
+        match decoded.message_response {
+          Some(reflection::server_reflection_response::MessageResponse::FileDescriptorResponse(fd)) => {
+            let mut pool = DescriptorPool::default();
 
-                // println!("Decoded : {decoded:?}");
+            let mut descriptors = vec![];
 
-                match decoded.message_response {
-                    Some(reflection::server_reflection_response::MessageResponse::FileDescriptorResponse(fd)) => {
-                        let mut pool = DescriptorPool::default();
+            for file in fd.file_descriptor_proto {
+              let fd = FileDescriptorProto::decode(file.as_ref());
 
-                        let mut descriptors = vec![];
+              if let Ok(fd) = fd {
+                descriptors.push(fd);
+              }
+            }
+            if let Err(err) = pool.add_file_descriptor_protos(descriptors) {
+              eprintln!("Error : {err}");
+              break;
+            }
 
-                        for file in fd.file_descriptor_proto {
-                            // let content = String::from_utf8_lossy(&file);
+            if with_output {
+              for service in pool.services() {
+                println!("{} is a service:\n", service.full_name());
+                println!("service {} {{", service.name());
 
-                            // println!("File : {content:?}");
-
-                            let fd = FileDescriptorProto::decode(file.as_ref());
-
-                            // println!("DF : {fd:#?}");
-
-                            if let Ok(fd) = fd {
-                                descriptors.push(fd);
-                            }
-                        }
-                        let res = pool.add_file_descriptor_protos(descriptors);
-                        println!("RES : {res:?}");
-
-                        return Ok(pool);
-                    }
-                    _ => {}
+                for method in service.methods() {
+                  println!(
+                    "  rpc {}( {}{} ) returns ( {}{} );",
+                    method.name(),
+                    if method.is_client_streaming() { "stream " } else { "" },
+                    method.input().full_name(),
+                    if method.is_server_streaming() { "stream " } else { "" },
+                    method.output().full_name()
+                  );
                 }
 
-                break;
+                println!("}}");
+              }
             }
-            Some(Err(err)) => {
-                eprintln!("ERR : {err:?}");
-                break;
-            }
-            None => {
-                println!("Ended stream");
-                break;
-            }
-        }
-    }
 
-    Err(anyhow!("NoDescriptor"))
+            return Ok(pool);
+          }
+          _ => {}
+        }
+
+        break;
+      }
+      Some(Err(err)) => {
+        eprintln!("ERR : {err:?}");
+        break;
+      }
+      None => {
+        eprintln!("Ended stream");
+        break;
+      }
+    }
+  }
+
+  Err(anyhow!("NoDescriptor"))
 }
 
 async fn call_endpoint(client: &Client, api: &str, data: Option<String>) -> Result<()> {
-    // let api = "api.protobuf.routing.RoutingStrips.GetRoutingStrips";
-    let (service, method) = api.split_once('/').unwrap();
-    // let method = parts[parts.len() - 1];
-    // let service = parts[..(parts.len() - 1)].join(".");
+  let (service, method) = api.split_once('/').unwrap();
 
-    println!("API : {api}");
-    println!("Service : {service}");
-    println!("Method : {method}");
+  let pool = describe_service(client, service, false).await?;
 
-    let pool = describe_service(client, service).await?;
+  let service_descriptor = pool.get_service_by_name(&service).unwrap();
 
-    let service_descriptor = pool.get_service_by_name(&service).unwrap();
-    // println!("DESC : {service_descriptor:?}");
+  let mut input = None;
+  let mut output = None;
 
-    let package = service_descriptor.package_name();
+  let mut is_stream_request = false;
+  let mut is_stream_response = false;
 
-    let mut input = None;
-    let mut output = None;
+  for method_descriptor in service_descriptor.methods() {
+    if method_descriptor.name() == method {
+      input = Some(method_descriptor.input().full_name().to_string());
+      output = Some(method_descriptor.output().full_name().to_string());
 
-    let mut is_stream_request = false;
-    let mut is_stream_response = false;
-
-    for method_descriptor in service_descriptor.methods() {
-        if method_descriptor.name() == method {
-            input = Some(method_descriptor.input().full_name().to_string());
-            output = Some(method_descriptor.output().full_name().to_string());
-            // println!("Method : {method:?}");
-            // println!("Method:Input : {:?}", method.input());
-            // println!("Method:Output : {:?}", method.output());
-
-            is_stream_request = method_descriptor.is_client_streaming();
-            is_stream_response = method_descriptor.is_server_streaming();
-        }
+      is_stream_request = method_descriptor.is_client_streaming();
+      is_stream_response = method_descriptor.is_server_streaming();
     }
+  }
 
-    println!("Package : {package:?}");
-    println!("Input : {input:?}");
-    println!("Output : {output:?}");
+  let input = input.unwrap();
+  let output = output.unwrap();
 
-    let input = input.unwrap(); //format!("{}.{}", package, input.unwrap());
-    let output = output.unwrap(); // format!("{}.{}", package, output.unwrap());
+  let input_descriptor = pool.get_message_by_name(&input).unwrap();
+  let output_descriptor = pool.get_message_by_name(&output).unwrap();
 
-    let input_descriptor = pool.get_message_by_name(&input).unwrap();
-    let output_descriptor = pool.get_message_by_name(&output).unwrap();
+  let json = match data {
+    Some(json) => json,
+    // Default is empty payload
+    None => r#"{}"#.to_string(),
+  };
 
-    let json = match data {
-        Some(json) => json,
-        // Default is empty payload
-        None => r#"{}"#.to_string(),
-    };
+  let mut deserializer = serde_json::Deserializer::from_str(&json);
+  let dynamic_message = DynamicMessage::deserialize(input_descriptor, &mut deserializer)?;
+  deserializer.end()?;
 
-    let mut deserializer = serde_json::Deserializer::from_str(&json);
-    let dynamic_message = DynamicMessage::deserialize(input_descriptor, &mut deserializer)?;
-    deserializer.end()?;
+  let payload = create_payload(dynamic_message, create_route(&format!("{service}.{method}"))?)?;
 
-    let payload = create_payload(
-        dynamic_message,
-        create_route(&format!("{service}.{method}"))?,
-    )?;
-
-    match (is_stream_request, is_stream_response) {
-        (false, true) => {
-            request_stream_endpoint(&client, payload, output_descriptor).await?;
-        }
-        (false, false) => {
-            request_response_endpoint(&client, payload, output_descriptor).await?;
-        }
-        _ => {
-            return Err(anyhow!("UnsupportedStream"));
-        }
+  match (is_stream_request, is_stream_response) {
+    (false, true) => {
+      request_stream_endpoint(&client, payload, output_descriptor).await?;
     }
+    (false, false) => {
+      request_response_endpoint(&client, payload, output_descriptor).await?;
+    }
+    _ => {
+      return Err(anyhow!("UnsupportedStream"));
+    }
+  }
 
-    Ok(())
+  Ok(())
 }
 
 async fn request_stream_endpoint(
-    client: &Client,
-    payload: Payload,
-    output_descriptor: MessageDescriptor,
+  client: &Client,
+  payload: Payload,
+  output_descriptor: MessageDescriptor,
 ) -> Result<()> {
-    println!("Start request_stream");
-    let mut results = client.request_stream(payload);
+  let mut results = client.request_stream(payload);
 
-    loop {
-        match results.next().await {
-            Some(Ok(res)) => {
-                // println!("Got : {:?}", res);
+  loop {
+    match results.next().await {
+      Some(Ok(res)) => {
+        let buf = res.data().unwrap().clone();
+        let dynamic_message = DynamicMessage::decode(output_descriptor.clone(), buf);
 
-                let buf = res.data().unwrap().clone();
-                // let dynamic_message = DynamicMessage::decode(message_descriptor.clone(), buf);
-                let dynamic_message = DynamicMessage::decode(output_descriptor.clone(), buf);
-
-                // println!("Response : {dynamic_message:#?}");
-                if let Ok(message) = dynamic_message {
-                    println!("JSON : {:?}", serde_json::json!(message));
-                }
-            }
-            Some(Err(err)) => {
-                eprintln!("ERR : {err:?}");
-                break;
-            }
-            None => {
-                println!("Ended stream");
-                break;
-            }
+        if let Ok(message) = dynamic_message {
+          println!("{}", serde_json::json!(message));
         }
+      }
+      Some(Err(err)) => {
+        eprintln!("ERR : {err:?}");
+        break;
+      }
+      None => {
+        eprintln!("Ended stream");
+        break;
+      }
     }
+  }
 
-    Ok(())
+  Ok(())
 }
 
 async fn request_response_endpoint(
-    client: &Client,
-    payload: Payload,
-    output_descriptor: MessageDescriptor,
+  client: &Client,
+  payload: Payload,
+  output_descriptor: MessageDescriptor,
 ) -> Result<()> {
-    println!("Start request_response");
-    let results = client.request_response(payload).await?;
+  let results = client.request_response(payload).await?;
 
-    if let Some(res) = results {
-        let buf = res.data().unwrap().clone();
-        // let dynamic_message = DynamicMessage::decode(message_descriptor.clone(), buf);
-        let dynamic_message = DynamicMessage::decode(output_descriptor.clone(), buf);
+  if let Some(res) = results {
+    let buf = res.data().unwrap().clone();
+    let dynamic_message = DynamicMessage::decode(output_descriptor.clone(), buf);
 
-        // println!("Response : {dynamic_message:#?}");
-        if let Ok(message) = dynamic_message {
-            println!("JSON : {:?}", serde_json::json!(message));
-        }
+    if let Ok(message) = dynamic_message {
+      println!("{}", serde_json::json!(message));
     }
+  }
 
-    Ok(())
+  Ok(())
 }
 
 fn create_route(name: &str) -> Result<CompositeMetadata> {
-    let routing = RoutingMetadata::builder().push_str(name).build();
-    let mut buf = BytesMut::new();
-    routing.write_to(&mut buf);
+  let routing = RoutingMetadata::builder().push_str(name).build();
+  let mut buf = BytesMut::new();
+  routing.write_to(&mut buf);
 
-    let mut metadata: LinkedList<FnMetadata> = LinkedList::new();
-    metadata.push_back(Box::new(move || {
-        Ok((MimeType::MESSAGE_X_RSOCKET_ROUTING_V0, buf.to_vec()))
-    }));
+  let mut metadata: LinkedList<FnMetadata> = LinkedList::new();
+  metadata.push_back(Box::new(move || {
+    Ok((MimeType::MESSAGE_X_RSOCKET_ROUTING_V0, buf.to_vec()))
+  }));
 
-    let mut composite = CompositeMetadata::builder();
+  let mut composite = CompositeMetadata::builder();
 
-    for mut boxed in metadata.into_iter() {
-        let (mime_type, raw) = boxed()?;
-        composite = composite.push(mime_type, raw);
-    }
+  for mut boxed in metadata.into_iter() {
+    let (mime_type, raw) = boxed()?;
+    composite = composite.push(mime_type, raw);
+  }
 
-    Ok(composite.build())
+  Ok(composite.build())
 }
 
 fn create_setup(token: &str) -> Result<CompositeMetadata> {
-    let mut buf = BytesMut::new();
+  let mut buf = BytesMut::new();
 
-    // Does not exist in Rust lib. JavaScript implementation:
-    // function encodeBearerAuthMetadata(token) {
-    //     var tokenBuffer = Buffer.from(token);
-    //     var buffer = Buffer.allocUnsafe(authTypeIdBytesLength);
-    //     // eslint-disable-next-line no-bitwise
-    //     buffer.writeUInt8(WellKnownAuthType_1.WellKnownAuthType.BEARER.identifier | streamMetadataKnownMask);
-    //     return Buffer.concat([buffer, tokenBuffer]);
-    // }
-    let stream_metadata_known_mask = 0x80;
-    let bearer_ident = 0x01;
-    buf.put_u8(bearer_ident | stream_metadata_known_mask);
-    buf.put_slice(token.as_bytes());
+  // Does not exist in Rust lib. JavaScript implementation:
+  // function encodeBearerAuthMetadata(token) {
+  //     var tokenBuffer = Buffer.from(token);
+  //     var buffer = Buffer.allocUnsafe(authTypeIdBytesLength);
+  //     // eslint-disable-next-line no-bitwise
+  //     buffer.writeUInt8(WellKnownAuthType_1.WellKnownAuthType.BEARER.identifier | streamMetadataKnownMask);
+  //     return Buffer.concat([buffer, tokenBuffer]);
+  // }
+  let stream_metadata_known_mask = 0x80;
+  let bearer_ident = 0x01;
+  buf.put_u8(bearer_ident | stream_metadata_known_mask);
+  buf.put_slice(token.as_bytes());
 
-    let mut metadata: LinkedList<FnMetadata> = LinkedList::new();
-    metadata.push_back(Box::new(move || {
-        Ok((MimeType::MESSAGE_X_RSOCKET_AUTHENTICATION_V0, buf.to_vec()))
-    }));
+  let mut metadata: LinkedList<FnMetadata> = LinkedList::new();
+  metadata.push_back(Box::new(move || {
+    Ok((MimeType::MESSAGE_X_RSOCKET_AUTHENTICATION_V0, buf.to_vec()))
+  }));
 
-    let mut composite = CompositeMetadata::builder();
+  let mut composite = CompositeMetadata::builder();
 
-    for mut boxed in metadata.into_iter() {
-        let (mime_type, raw) = boxed()?;
-        composite = composite.push(mime_type, raw);
-    }
+  for mut boxed in metadata.into_iter() {
+    let (mime_type, raw) = boxed()?;
+    composite = composite.push(mime_type, raw);
+  }
 
-    Ok(composite.build())
+  Ok(composite.build())
 }
 
 fn create_payload(data: impl Message, metadata: CompositeMetadata) -> Result<Payload> {
-    let request_payload = Payload::builder()
-        .set_data(data.encode_to_vec())
-        .set_metadata(metadata.bytes())
-        .build();
+  let request_payload = Payload::builder()
+    .set_data(data.encode_to_vec())
+    .set_metadata(metadata.bytes())
+    .build();
 
-    Ok(request_payload)
+  Ok(request_payload)
 }
 
 fn create_setup_payload(metadata: CompositeMetadata) -> Result<Payload> {
-    let request_payload = Payload::builder().set_metadata(metadata.bytes()).build();
+  let request_payload = Payload::builder().set_metadata(metadata.bytes()).build();
 
-    Ok(request_payload)
+  Ok(request_payload)
 }
