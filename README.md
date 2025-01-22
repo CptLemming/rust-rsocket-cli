@@ -19,4 +19,5 @@ rsocket-cli ws://localhost:8201/rsocket api.protobuf.routing.RoutingStrips/Route
 # Entry : {...}
 rsocket-cli ws://localhost:8080/rsocket renderer.RendererService/OnEvent
 # Entry : {...}
+rsocket-cli ws://localhost:8201/rsocket -t bearerToken api.protobuf.routing.RoutingStrips/GetRoutingStrips
 ```

@@ -1,6 +1,7 @@
 use std::collections::LinkedList;
 
 use anyhow::anyhow;
+use bytes::BufMut;
 use bytes::BytesMut;
 use clap::{Args, Parser, Subcommand};
 use prost::Message;
@@ -33,6 +34,8 @@ struct Cli {
     endpoint: Option<String>,
     #[arg(short, long)]
     data: Option<String>,
+    #[arg(short, long)]
+    token: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -66,10 +69,17 @@ async fn main() -> Result<()> {
     println!("Address : {:?}", cli.address);
     println!("Endpoint : {:?}", cli.endpoint);
     println!("Data : {:?}", cli.data);
+    println!("Token : {:?}", cli.token);
+
+    let connection_payload = cli
+        .token
+        .and_then(|token| create_setup(token.as_str()).ok())
+        .and_then(|metadata| create_setup_payload(metadata).ok())
+        .unwrap_or_else(|| Payload::from(""));
 
     let client = RSocketFactory::connect()
         .transport(WebsocketClientTransport::from(cli.address.as_ref()))
-        .setup(Payload::from("READY!"))
+        .setup(connection_payload)
         .mime_type("text/plain", "text/plain")
         .start()
         .await?;
@@ -379,11 +389,48 @@ fn create_route(name: &str) -> Result<CompositeMetadata> {
     Ok(composite.build())
 }
 
+fn create_setup(token: &str) -> Result<CompositeMetadata> {
+    let mut buf = BytesMut::new();
+
+    // Does not exist in Rust lib. JavaScript implementation:
+    // function encodeBearerAuthMetadata(token) {
+    //     var tokenBuffer = Buffer.from(token);
+    //     var buffer = Buffer.allocUnsafe(authTypeIdBytesLength);
+    //     // eslint-disable-next-line no-bitwise
+    //     buffer.writeUInt8(WellKnownAuthType_1.WellKnownAuthType.BEARER.identifier | streamMetadataKnownMask);
+    //     return Buffer.concat([buffer, tokenBuffer]);
+    // }
+    let stream_metadata_known_mask = 0x80;
+    let bearer_ident = 0x01;
+    buf.put_u8(bearer_ident | stream_metadata_known_mask);
+    buf.put_slice(token.as_bytes());
+
+    let mut metadata: LinkedList<FnMetadata> = LinkedList::new();
+    metadata.push_back(Box::new(move || {
+        Ok((MimeType::MESSAGE_X_RSOCKET_AUTHENTICATION_V0, buf.to_vec()))
+    }));
+
+    let mut composite = CompositeMetadata::builder();
+
+    for mut boxed in metadata.into_iter() {
+        let (mime_type, raw) = boxed()?;
+        composite = composite.push(mime_type, raw);
+    }
+
+    Ok(composite.build())
+}
+
 fn create_payload(data: impl Message, metadata: CompositeMetadata) -> Result<Payload> {
     let request_payload = Payload::builder()
         .set_data(data.encode_to_vec())
         .set_metadata(metadata.bytes())
         .build();
+
+    Ok(request_payload)
+}
+
+fn create_setup_payload(metadata: CompositeMetadata) -> Result<Payload> {
+    let request_payload = Payload::builder().set_metadata(metadata.bytes()).build();
 
     Ok(request_payload)
 }
