@@ -317,11 +317,13 @@ async fn request_response_endpoint(
   let results = client.request_response(payload).await?;
 
   if let Some(res) = results {
-    let buf = res.data().unwrap().clone();
-    let dynamic_message = DynamicMessage::decode(output_descriptor.clone(), buf);
+    if let Some(buf) = res.data() {
+      let buf = buf.clone();
+      let dynamic_message = DynamicMessage::decode(output_descriptor.clone(), buf);
 
-    if let Ok(message) = dynamic_message {
-      println!("{}", serde_json::json!(message));
+      if let Ok(message) = dynamic_message {
+        println!("{}", serde_json::json!(message));
+      }
     }
   }
 
