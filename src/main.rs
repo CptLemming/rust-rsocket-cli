@@ -3,6 +3,7 @@ use std::collections::LinkedList;
 use anyhow::anyhow;
 use bytes::BufMut;
 use bytes::BytesMut;
+use clap::ArgAction;
 use clap::{Args, Parser, Subcommand};
 use prost::Message;
 use prost_reflect::prost_types::FileDescriptorProto;
@@ -34,6 +35,8 @@ struct Cli {
   endpoint: Option<String>,
   #[arg(short, long)]
   data: Option<String>,
+  #[arg(short, long, action=ArgAction::SetTrue)]
+  pretty: Option<bool>,
   #[arg(short, long)]
   token: Option<String>,
 }
@@ -80,7 +83,7 @@ async fn main() -> Result<()> {
     }
     None => match &cli.endpoint {
       Some(endpoint) => {
-        call_endpoint(&client, &endpoint, cli.data).await?;
+        call_endpoint(&client, &endpoint, cli.data, cli.pretty.unwrap_or_default()).await?;
       }
       _ => {}
     },
@@ -222,7 +225,7 @@ async fn describe_service(client: &Client, name: &str, with_output: bool) -> Res
   Err(anyhow!("NoDescriptor"))
 }
 
-async fn call_endpoint(client: &Client, api: &str, data: Option<String>) -> Result<()> {
+async fn call_endpoint(client: &Client, api: &str, data: Option<String>, pretty: bool) -> Result<()> {
   let (service, method) = api.split_once('/').unwrap();
 
   let pool = describe_service(client, service, false).await?;
@@ -265,10 +268,10 @@ async fn call_endpoint(client: &Client, api: &str, data: Option<String>) -> Resu
 
   match (is_stream_request, is_stream_response) {
     (false, true) => {
-      request_stream_endpoint(&client, payload, output_descriptor).await?;
+      request_stream_endpoint(&client, payload, output_descriptor, pretty).await?;
     }
     (false, false) => {
-      request_response_endpoint(&client, payload, output_descriptor).await?;
+      request_response_endpoint(&client, payload, output_descriptor, pretty).await?;
     }
     _ => {
       return Err(anyhow!("UnsupportedStream"));
@@ -282,6 +285,7 @@ async fn request_stream_endpoint(
   client: &Client,
   payload: Payload,
   output_descriptor: MessageDescriptor,
+  pretty: bool,
 ) -> Result<()> {
   let mut results = client.request_stream(payload);
 
@@ -292,7 +296,14 @@ async fn request_stream_endpoint(
         let dynamic_message = DynamicMessage::decode(output_descriptor.clone(), buf);
 
         if let Ok(message) = dynamic_message {
-          println!("{}", serde_json::json!(message));
+          let content = serde_json::json!(message);
+          if pretty {
+            if let Ok(content) = serde_json::to_string_pretty(&content) {
+              println!("{}", content);
+            }
+          } else {
+            println!("{}", content);
+          }
         }
       }
       Some(Err(err)) => {
@@ -313,6 +324,7 @@ async fn request_response_endpoint(
   client: &Client,
   payload: Payload,
   output_descriptor: MessageDescriptor,
+  pretty: bool,
 ) -> Result<()> {
   let results = client.request_response(payload).await?;
 
@@ -322,7 +334,14 @@ async fn request_response_endpoint(
       let dynamic_message = DynamicMessage::decode(output_descriptor.clone(), buf);
 
       if let Ok(message) = dynamic_message {
-        println!("{}", serde_json::json!(message));
+        let content = serde_json::json!(message);
+        if pretty {
+          if let Ok(content) = serde_json::to_string_pretty(&content) {
+            println!("{}", content);
+          }
+        } else {
+          println!("{}", content);
+        }
       }
     }
   }
