@@ -142,10 +142,12 @@ async fn list_services(client: &Client, _service: &Option<String>) -> Result<()>
 }
 
 async fn describe_service(client: &Client, name: &str, with_output: bool) -> Result<DescriptorPool> {
+  let (service_name, method_name) = name.split_once("/").unwrap_or((name, ""));
+
   let req = reflection::ServerReflectionRequest {
     host: "ignore".to_owned(),
     message_request: Some(reflection::server_reflection_request::MessageRequest::FileByFilename(
-      name.to_string(),
+      service_name.to_string(),
     )),
   };
 
@@ -186,21 +188,39 @@ async fn describe_service(client: &Client, name: &str, with_output: bool) -> Res
 
             if with_output {
               for service in pool.services() {
-                println!("{} is a service:\n", service.full_name());
-                println!("service {} {{", service.name());
-
-                for method in service.methods() {
-                  println!(
-                    "  rpc {}( {}{} ) returns ( {}{} );",
-                    method.name(),
-                    if method.is_client_streaming() { "stream " } else { "" },
-                    method.input().full_name(),
-                    if method.is_server_streaming() { "stream " } else { "" },
-                    method.output().full_name()
-                  );
+                if method_name.is_empty() {
+                  println!("{} is a service:\n", service.full_name());
+                  println!("service {} {{", service.name());
                 }
 
-                println!("}}");
+                for method in service.methods() {
+                  if method_name.is_empty() {
+                    println!(
+                      "  rpc {}( {}{} ) returns ( {}{} );",
+                      method.name(),
+                      if method.is_client_streaming() { "stream " } else { "" },
+                      method.input().full_name(),
+                      if method.is_server_streaming() { "stream " } else { "" },
+                      method.output().full_name()
+                    );
+                  }
+
+                  if !method_name.is_empty() && method.name() == method_name {
+                    println!("{} is a method:\n", method.full_name());
+                    println!(
+                      "  rpc {}( {}{} ) returns ( {}{} );",
+                      method.name(),
+                      if method.is_client_streaming() { "stream " } else { "" },
+                      method.input().full_name(),
+                      if method.is_server_streaming() { "stream " } else { "" },
+                      method.output().full_name()
+                    );
+                  }
+                }
+
+                if method_name.is_empty() {
+                  println!("}}");
+                }
               }
             }
 

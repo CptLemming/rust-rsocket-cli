@@ -1,5 +1,5 @@
 Package: rsocket-cli
-Version: 0.1.2
+Version: 0.1.3
 Description: RSocket API CLI
 Maintainer: ash <ashley.wilson@calrec.com>
 Architecture: all
