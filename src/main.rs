@@ -208,7 +208,7 @@ async fn describe_service(client: &Client, name: &str, with_output: bool) -> Res
                   if !method_name.is_empty() && method.name() == method_name {
                     println!("{} is a method:\n", method.full_name());
                     println!(
-                      "  rpc {}( {}{} ) returns ( {}{} );",
+                      "rpc {}( {}{} ) returns ( {}{} );",
                       method.name(),
                       if method.is_client_streaming() { "stream " } else { "" },
                       method.input().full_name(),
