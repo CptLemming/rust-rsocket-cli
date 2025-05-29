@@ -21,22 +21,39 @@ api.protobuf.eq.EqBand
 
 ## Describe
 
+### Service
+
 Describe service methods:
 
 ```sh
-rsocket-cli ws://localhost:8201/rsocket describe api.protobuf.eq.EqBands
+rsocket-cli ws://localhost:8201/rsocket describe api.protobuf.eq.EqEndpoint
 ```
 
 Output:
 
 ```txt
-api.protobuf.eq.EqBands is a service:
+api.protobuf.eq.EqEndpoint is a service:
 
-service EqBands {
-  rpc UpdateBand( api.protobuf.eq.BandIdent ) returns ( api.protobuf.mutation.MutationResult );
-  rpc GetBand( api.protobuf.eq.BandRequest ) returns ( stream api.protobuf.eq.BandResponse );
-  rpc GetBands( api.protobuf.eq.BandsRequest ) returns ( stream api.protobuf.eq.BandsResponse );
+service EqEndpoint {
+  rpc GetBands( api.protobuf.path.PathOrFaderRequest ) returns ( stream api.protobuf.eq.BandsResponse );
+  rpc GetGraph( api.protobuf.path.PathOrFaderRequest ) returns ( stream api.protobuf.eq.EqGraphResponse );
 }
+```
+
+### Service method
+
+Describe service method:
+
+```sh
+rsocket-cli ws://localhost:8201/rsocket describe api.protobuf.eq.EqEndpoint/GetBands
+```
+
+Output:
+
+```txt
+api.protobuf.eq.EqEndpoint.GetBands is a method:
+
+rpc GetBands( api.protobuf.path.PathOrFaderRequest ) returns ( stream api.protobuf.eq.BandsResponse );
 ```
 
 ## Call
